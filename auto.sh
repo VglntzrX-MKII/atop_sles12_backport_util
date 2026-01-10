@@ -1,29 +1,87 @@
-#!/bin/bash
-set -e
+  #!/bin/bash
 
+# --- Configuration & Colors ---
+set -e
 CUR_DIR=$(pwd)
 WORKSPACE="$CUR_DIR/atop_rpm_build"
-ATOP_VERSION="2.12.1"
-SOURCE_TARBALL="atop-${ATOP_VERSION}.tar.gz"
+DOWNLOAD_URL="https://www.atoptool.nl/downloadatop.php"
 
-echo ">>> Preparing workspace..."
-mkdir -p "$WORKSPACE"/{SOURCES,SPECS,BUILD,RPMS,SRPMS,BUILDROOT}
+# Color Codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-echo ">>> Installing dependencies..."
-sudo zypper install -y gcc make ncurses-devel zlib-devel glib2-devel rpm-build tar wget
+# --- UI Functions ---
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-if [ ! -f "$WORKSPACE/SOURCES/$SOURCE_TARBALL" ]; then
-    wget "https://www.atoptool.nl/download/$SOURCE_TARBALL" -O "$WORKSPACE/SOURCES/$SOURCE_TARBALL"
+# Animated Spinner for long tasks
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    echo -n " "
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "    \b\b\b\b"
+}
+
+# --- 1. Auto-detect Latest Version ---
+log_info "Checking for the latest version of atop..."
+# Scrapes the download page for the first mention of atop-X.XX.X.tar.gz
+ATOP_VERSION=$(curl -s $DOWNLOAD_URL | grep -oP 'atop-\K[0-9]+\.[0-9]+\.[0-9]+(?=\.tar\.gz)' | head -n 1)
+
+if [ -z "$ATOP_VERSION" ]; then
+    log_error "Could not detect latest version. Falling back to 2.12.1."
+    ATOP_VERSION="2.12.1"
 fi
 
-echo ">>> Creating Spec file..."
-cat << 'EOF' > "$WORKSPACE/SPECS/atop.spec"
+SOURCE_TARBALL="atop-${ATOP_VERSION}.tar.gz"
+log_success "Detected version: ${YELLOW}$ATOP_VERSION${NC}"
+
+# --- 2. Prepare Workspace ---
+log_info "Preparing workspace at $WORKSPACE..."
+mkdir -p "$WORKSPACE"/{SOURCES,SPECS,BUILD,RPMS,SRPMS,BUILDROOT}
+
+# --- 3. Install Dependencies ---
+log_info "Installing build dependencies (sudo may be required)..."
+(sudo zypper install -y gcc make ncurses-devel zlib-devel glib2-devel rpm-build tar wget > /dev/null 2>&1) &
+spinner $!
+log_success "Dependencies installed."
+
+# --- 4. Download Source ---
+if [ ! -f "$WORKSPACE/SOURCES/$SOURCE_TARBALL" ]; then
+    log_info "Downloading $SOURCE_TARBALL..."
+    # Simplified wget call to ensure compatibility
+    wget -q "https://www.atoptool.nl/download/$SOURCE_TARBALL" -O "$WORKSPACE/SOURCES/$SOURCE_TARBALL"
+    
+    # Check if download actually succeeded
+    if [ $? -ne 0 ]; then
+        log_error "Download failed! Please check your internet connection."
+        exit 1
+    fi
+else
+    log_warn "Source tarball already exists, skipping download."
+fi
+
+# --- 5. Create Spec File ---
+log_info "Generating RPM Spec file for version $ATOP_VERSION..."
+cat << EOF > "$WORKSPACE/SPECS/atop.spec"
 Name:           atop
-Version:        2.12.1
+Version:        ${ATOP_VERSION}
 Release:        1
 Summary:        Advanced System and Process Monitor
 License:        GPLv2+
-Source0:        atop-2.12.1.tar.gz
+Source0:        ${SOURCE_TARBALL}
 BuildRequires:  gcc, make, ncurses-devel, zlib-devel, glib2-devel
 
 %description
@@ -48,7 +106,7 @@ mkdir -p %{buildroot}/usr/lib/systemd/system-sleep
 
 make install DESTDIR=%{buildroot}
 
-# Fix paths for SLES 12 compatibility
+# Fix paths for SLES compatibility
 if [ -d %{buildroot}/lib/systemd/system ]; then
     mv %{buildroot}/lib/systemd/system/* %{buildroot}/usr/lib/systemd/system/
 fi
@@ -70,11 +128,18 @@ fi
 /usr/lib/systemd/system-sleep/*
 EOF
 
-echo ">>> Starting RPM build..."
-rpmbuild --define "_topdir $WORKSPACE" -ba "$WORKSPACE/SPECS/atop.spec"
+# --- 6. Build RPM ---
+log_info "Starting RPM build (this may take a minute)..."
+(rpmbuild --define "_topdir $WORKSPACE" -ba "$WORKSPACE/SPECS/atop.spec" > "$WORKSPACE/build.log" 2>&1) &
+spinner $!
 
-cp "$WORKSPACE"/RPMS/x86_64/atop-${ATOP_VERSION}-1.x86_64.rpm "$CUR_DIR/"
-
-echo "-------------------------------------------------------"
-echo "DONE! Your RPM is at: $CUR_DIR/atop-${ATOP_VERSION}-1.x86_64.rpm"
-echo "-------------------------------------------------------"
+if [ $? -eq 0 ]; then
+    cp "$WORKSPACE"/RPMS/x86_64/atop-${ATOP_VERSION}-1.x86_64.rpm "$CUR_DIR/"
+    echo -e "\n-------------------------------------------------------"
+    log_success "Build Complete!"
+    log_info "Your RPM is at: ${YELLOW}$CUR_DIR/atop-${ATOP_VERSION}-1.x86_64.rpm${NC}"
+    echo "-------------------------------------------------------"
+else
+    log_error "Build failed! Check log at $WORKSPACE/build.log"
+    exit 1
+fi
