@@ -30,8 +30,8 @@ Ensure you have the SLES 12 SDK or "Development Tools" module enabled in your SU
 Run the script directly on a SLES 12 build host:
 
 ```bash
-chmod +x build_atop.sh
-./build_atop.sh
+chmod +x auto.sh
+./auto.sh
 
 ```
 
