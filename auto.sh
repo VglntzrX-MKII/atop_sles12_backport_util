@@ -79,13 +79,27 @@ cat << EOF > "$WORKSPACE/SPECS/atop.spec"
 Name:           atop
 Version:        ${ATOP_VERSION}
 Release:        1
+Vendor:         SUSE
+URL:            https://www.atoptool.nl
+Packager:       Gerlof Langeveld <gerlof.langeveld@atoptool.nl>
 Summary:        Advanced System and Process Monitor
 License:        GPLv2+
+Group: 	        System Environment
 Source0:        ${SOURCE_TARBALL}
 BuildRequires:  gcc, make, ncurses-devel, zlib-devel, glib2-devel
 
 %description
-Atop is an interactive monitor to view the load on a Linux system.
+The program atop is an interactive monitor to view the load on
+a Linux-system. It shows the occupation of the most critical
+hardware-resources (from a performance point of view) on system-level,
+i.e. cpu, memory, disk and network. It also shows which processess
+(and threads) are responsible for the indicated load (again cpu-,
+memory-, disk- and network-load on process-level).
+The program atop can also be used to log system- and process-level
+information in raw format for long-term analysis.
+
+The program atopsar can be used to view system-level statistics
+as reports.
 
 %prep
 %setup -q
@@ -97,34 +111,32 @@ make %{?_smp_mflags}
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/sbin
-mkdir -p %{buildroot}/usr/share/man/man1
-mkdir -p %{buildroot}/usr/share/man/man5
-mkdir -p %{buildroot}/usr/share/man/man8
 mkdir -p %{buildroot}/etc/default
 mkdir -p %{buildroot}/usr/lib/systemd/system
-mkdir -p %{buildroot}/usr/lib/systemd/system-sleep
 
 make install DESTDIR=%{buildroot}
+
+# Logic: Remove any file that ends exactly in -%{version} 
+# This cleans up atop-2.12.1 and atopsar-2.12.1 automatically
+find %{buildroot}/usr/bin -type l -name "*-%{version}" -delete
+find %{buildroot}/usr/bin -type f -name "*-%{version}" -delete
 
 # Fix paths for SLES compatibility
 if [ -d %{buildroot}/lib/systemd/system ]; then
     mv %{buildroot}/lib/systemd/system/* %{buildroot}/usr/lib/systemd/system/
 fi
-if [ -d %{buildroot}/lib/systemd/system-sleep ]; then
-    mv %{buildroot}/lib/systemd/system-sleep/* %{buildroot}/usr/lib/systemd/system-sleep/
-fi
 
 %files
 %defattr(-,root,root)
+# Include all atop binaries
 /usr/bin/atop*
 /usr/sbin/atop*
+# Use %exclude with a wildcard to prevent the versioned doubles
+%exclude /usr/bin/*-%{version}
+
 /etc/default/atop
 /usr/share/man/man*/*
-/usr/lib/systemd/system/atop.service
-/usr/lib/systemd/system/atopacct.service
-/usr/lib/systemd/system/atop-rotate.service
-/usr/lib/systemd/system/atop-rotate.timer
-/usr/lib/systemd/system/atopgpu.service
+/usr/lib/systemd/system/atop*
 /usr/lib/systemd/system-sleep/*
 EOF
 
